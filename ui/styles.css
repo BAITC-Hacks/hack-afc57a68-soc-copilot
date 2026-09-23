@@ -36,6 +36,8 @@ html, body, .stApp, [data-testid="stAppViewContainer"] {
   transition: background-color 200ms ease, color 200ms ease, border-color 200ms ease;
 }
 [data-testid="stHeader"] { background: var(--org-bg); color: var(--org-ink); }
+[data-testid="stAppDeployButton"],
+[data-testid="stHeader"] [data-testid="stStatusWidget"] { display: none !important; }
 .block-container { max-width: 1440px; padding-top: 4.75rem; padding-bottom: 3rem; }
 h1, h2, h3, h4, h5, h6 { color: var(--org-ink) !important; letter-spacing: -.025em; }
 h1 { font-size: 2.35rem !important; font-weight: 700 !important; }
@@ -154,7 +156,16 @@ button:focus-visible, input:focus-visible, [role="tab"]:focus-visible { outline:
 [data-testid="stAlertContainer"]:has([data-testid="stNotificationContentError"], [data-testid="stAlertContentError"]) { color: var(--org-danger) !important; background: var(--org-danger-bg) !important; }
 [data-testid="stAlertContainer"]:has([data-testid="stNotificationContentWarning"], [data-testid="stAlertContentWarning"]) { color: var(--org-warning) !important; background: var(--org-warning-bg) !important; }
 [data-testid="stAlertContainer"]:has([data-testid="stNotificationContentSuccess"], [data-testid="stAlertContentSuccess"]) { color: var(--org-success) !important; background: var(--org-success-bg) !important; }
-[data-testid="stChatMessage"], [data-testid="stStatusWidget"] { color: var(--org-ink); background: var(--org-raised); }
+[data-testid="stChatMessage"] { color: var(--org-ink); background: var(--org-raised); }
+/* Streamlit gives the message body its own native theme color. Override it,
+   including Markdown quotes, instead of relying on the outer chat bubble. */
+[data-testid="stChatMessageContent"],
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"],
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] :is(p, li, blockquote) {
+  color: var(--org-ink) !important;
+}
+[data-testid="stChatMessage"] blockquote { border-left-color: var(--org-teal); opacity: 1; }
+[data-testid="stChatMessage"] a { color: var(--org-teal) !important; }
 [data-testid="stCode"], [data-testid="stCode"] pre, [data-testid="stCode"] code,
 [data-testid="stJson"], [data-testid="stJson"] > div { background: var(--org-raised) !important; color: var(--org-ink) !important; }
 [data-testid="stCode"] span { color: var(--org-ink) !important; }
