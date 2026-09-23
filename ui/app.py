@@ -17,20 +17,42 @@ from app.agent import llm
 from app.pipeline import analyze, chat_tools, get_run
 from app.report import to_markdown
 from app.uploads import save_upload
-from ui.components import SEVERITIES, all_findings, safe, show_finding, source_panel, style, word_diff
+from ui.components import SEVERITIES, all_findings, safe, show_finding, source_panel, style, theme_switcher, word_diff
+from ui.filters import FILTERS, METRICS, filter_findings, toggle_selection
 
 st.set_page_config(page_title='OrgTrace · Сравнение документов', page_icon='◈', layout='wide')
 style()
+theme_switcher()
 st.session_state.setdefault('step', 1)
 st.session_state.setdefault('history', {})
-st.session_state.setdefault('active_filter', 'Все изменения')
+st.session_state.setdefault('active_filters', [])
+
+
+def clear_finding():
+    st.session_state.pop('selected_finding', None)
+
+
+def reset_filters():
+    st.session_state.update(active_filters=[], finding_query='', finding_severity='Все уровни')
+    clear_finding()
+
+
+def toggle_filter(name):
+    # Callbacks execute BEFORE rerendering, so every card immediately reflects
+    # its new state (including cards rendered earlier in the same row).
+    st.session_state['active_filters'] = toggle_selection(st.session_state['active_filters'], name)
+    clear_finding()
+
+
+def select_finding(finding_id):
+    st.session_state['selected_finding'] = finding_id
 
 
 def reset():
     st.session_state['step'] = 1
     for key in ('report', 'sources', 'selected_finding', 'chat_messages', 'before_upload', 'after_upload', 'analysis_mode'):
         st.session_state.pop(key, None)
-    st.session_state['active_filter'] = 'Все изменения'
+    reset_filters()
 
 
 def execute(demo=False):
@@ -53,8 +75,8 @@ def execute(demo=False):
                     report = analyze(*paths, on_step=on_step, mode=mode)
             progress.progress(1.0, text='Источники проверены. Результаты готовы.')
             status.update(label='Анализ завершён', state='complete', expanded=False)
-        st.session_state.update(report=report, step=3, active_filter='Все изменения', chat_messages=[], finding_query='', finding_severity='Все уровни')
-        st.session_state.pop('selected_finding', None)
+        st.session_state.update(report=report, step=3, chat_messages=[])
+        reset_filters()
         st.session_state['history'][report.meta['run_id']] = report
         st.rerun()
     except ValueError as exc:
@@ -81,8 +103,8 @@ with st.sidebar:
         for rid, item in reversed(list(st.session_state['history'].items())[-5:]):
             label = item.meta['generated_at'].replace('T', ' ')[:16] + ' · ' + ('AI' if item.meta['mode'] == 'llm' else 'Правила')
             if st.button(label, key='history_' + rid, width='stretch'):
-                st.session_state.update(report=item, step=3, active_filter='Все изменения', chat_messages=[])
-                st.session_state.pop('selected_finding', None)
+                st.session_state.update(report=item, step=3, chat_messages=[])
+                reset_filters()
                 st.rerun()
     st.divider()
     st.caption('PDF · DOCX · XLSX\n\nДословные цитаты. Прозрачные источники.')
@@ -171,42 +193,30 @@ mode_label = 'Правила · без внешних запросов' if repor
 st.caption(f'{mode_label} · {"Восстановлено из кэша" if report.meta.get("cache_hit") else "Анализ завершён"} · {len(findings)} выводов · {summary["unverified"]} без подтверждения')
 for warning in report.meta.get('warnings', []):
     st.warning(warning)
-metrics = [('Создано подразделений', summary['units']['created'], 'Создано'),
-           ('Реорганизовано', summary['units']['reorganized'], 'Реорганизовано'),
-           ('Потеряно функций', summary['functions']['lost'], 'Потери'),
-           ('Частично потеряно', summary['functions']['partially_lost'], 'Частичные потери'),
-           ('Перенесено функций', summary['functions']['moved'], 'Переносы'),
-           ('Дублирование', summary['duplications'], 'Дублирование'),
-           ('Конфликты интересов', summary['conflicts_of_interest'], 'Конфликты'),
-           ('Дефекты документа', summary['document_defects'], 'Дефекты')]
+st.caption('Выберите одну или несколько карточек. Категории объединяются; повторный клик снимает выбор. Без выбора показаны все категории.')
 with st.container(key='metrics'):
     for offset in (0, 4):
-        for col, (label, value, filter_name) in zip(st.columns(4), metrics[offset:offset + 4]):
+        for col, (label, filter_name) in zip(st.columns(4), METRICS[offset:offset + 4]):
+            value = sum(FILTERS[filter_name](finding) for finding in findings)
+            active = filter_name in st.session_state['active_filters']
             with col:
-                if st.button(f'**{value}**\n\n{label}', key='metric_' + filter_name, width='stretch',
-                             type='primary' if st.session_state['active_filter'] == filter_name else 'secondary',
-                             help='Открыть связанные выводы и цитаты во вкладке «Обзор изменений»'):
-                    st.session_state['active_filter'] = filter_name
-                    st.session_state.pop('selected_finding', None)
+                st.button(f'**{value}**\n\n{label}', key='metric_' + filter_name, width='stretch',
+                          type='primary' if active else 'secondary', on_click=toggle_filter, args=(filter_name,),
+                          help='Убрать категорию из фильтра' if active else 'Добавить категорию к фильтру')
 
 overview, compare, export, trace, chat_tab = st.tabs(['Обзор изменений', 'Сравнение документов', 'Отчёт', 'Ход анализа', 'Вопрос агенту'])
 
 with overview:
-    filters = {'Все изменения': lambda f: True, 'Создано': lambda f: f.type == 'created',
-               'Реорганизовано': lambda f: f.type == 'reorganized', 'Структура': lambda f: f.category == 'structure',
-               'Потери': lambda f: f.type == 'lost', 'Частичные потери': lambda f: f.type == 'partially_lost',
-               'Переносы': lambda f: f.type in ('moved', 'removed_duplicate'),
-               'Дублирование': lambda f: f.category == 'duplication', 'Конфликты': lambda f: f.category == 'conflict',
-               'Дефекты': lambda f: f.category == 'defect', 'Не подтверждено': lambda f: not f.verified}
     c1, c2, c3 = st.columns([1.2, 1, 2])
-    active_filter = c1.selectbox('Тип изменения', list(filters), key='active_filter')
+    active_filters = c1.multiselect('Типы изменений', list(FILTERS), key='active_filters',
+                                    placeholder='Все категории', on_change=clear_finding)
     severity = c2.selectbox('Критичность', ['Все уровни'] + list(SEVERITIES.values()), key='finding_severity')
     query = c3.text_input('Поиск по выводам и цитатам', placeholder='Подразделение, функция или номер пункта…', key='finding_query')
-    selected = [f for f in findings if filters[active_filter](f)
-                and (severity == 'Все уровни' or SEVERITIES[f.severity] == severity)
-                and (not query or query.casefold() in ' '.join([f.title, f.rationale, *f.units_before, *f.units_after,
-                    *[e.clause + ' ' + e.quote for e in f.evidence]]).casefold())]
+    severity_key = next((key for key, label in SEVERITIES.items() if label == severity), None)
+    selected = filter_findings(findings, active_filters, severity_key, query)
     selected.sort(key=lambda f: (list(SEVERITIES).index(f.severity), f.id))
+    st.button('Сбросить все фильтры', key='reset_filters', on_click=reset_filters,
+              disabled=not (active_filters or query or severity_key))
     st.caption(f'Показано {len(selected)} из {len(findings)} выводов. Выберите вывод, чтобы проверить доказательства.')
     if not selected:
         st.info('По выбранным фильтрам изменений нет. Выберите другую категорию или очистите поиск.')
@@ -216,10 +226,9 @@ with overview:
         left, right = st.columns([1, 2.2], gap='large')
         with left, st.container(height=590, key='finding_list'):
             for f in selected:
-                if st.button(f'{f.id} · {f.title}', key='finding_' + f.id, width='stretch',
-                             type='primary' if st.session_state['selected_finding'] == f.id else 'secondary'):
-                    st.session_state['selected_finding'] = f.id
-                    st.rerun()
+                st.button(f'{f.id} · {f.title}', key='finding_' + f.id, width='stretch',
+                          type='primary' if st.session_state['selected_finding'] == f.id else 'secondary',
+                          on_click=select_finding, args=(f.id,))
         with right:
             show_finding(next(f for f in selected if f.id == st.session_state['selected_finding']), run)
 
@@ -260,7 +269,8 @@ with export:
 with trace:
     st.subheader('Как получен результат')
     st.caption('Журнал исходного анализа сохраняется вместе с результатом. Повторный запуск может восстановить его из кэша.')
-    st.dataframe([{'Этап': r['tool'], 'Результат': r['summary'], 'Время, мс': r['ms']} for r in report.agent_trace], hide_index=True, width='stretch')
+    # A DOM table follows the live CSS theme, unlike the dataframe's canvas.
+    st.table([{'Этап': r['tool'], 'Результат': r['summary'], 'Время, мс': r['ms']} for r in report.agent_trace])
     with st.expander('Идентификаторы и воспроизводимость'):
         st.code(report.meta['run_id'], language=None)
         st.json(report.meta.get('analysis_settings', {}))
