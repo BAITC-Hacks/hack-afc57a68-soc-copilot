@@ -76,7 +76,7 @@ def split_into_clauses(
                 break
             for line in _split_inline(raw):
                 m = NUM_RE.match(line)
-                if m and int(m.group(1).split(".")[0]) <= 20 and (
+                if m and (
                     "." in m.group(1) or re.match(r"^[А-ЯЁ]", m.group(2) or "")
                 ):
                     number, body = m.group(1), m.group(2)
@@ -94,6 +94,7 @@ def split_into_clauses(
                         clause_id=f"{doc_id}:{number}", doc_id=doc_id, edition=edition,
                         number=number, text=body, page=page_no, section=section_title,
                         parent=_parent_of(number.split("#")[0]), depth=number.count(".") + 1,
+                        source_pages={page_no: body},
                     )
                     clauses.append(current)
                     last_numbered = current
@@ -105,11 +106,13 @@ def split_into_clauses(
                         clause_id=f"{doc_id}:{number}", doc_id=doc_id, edition=edition,
                         number=number, text=lm.group(2) or "", page=page_no, section=section_title,
                         parent=last_numbered.number, depth=last_numbered.depth + 1,
+                        source_pages={page_no: lm.group(2) or ""},
                     )
                     clauses.append(current)
                     continue
                 if current is not None:                    # продолжение пункта
                     current.text = (current.text + " " + line).strip()
+                    current.source_pages[page_no] = (current.source_pages.get(page_no, '') + ' ' + line).strip()
         if stop:
             break
 

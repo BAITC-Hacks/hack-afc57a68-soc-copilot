@@ -6,6 +6,7 @@ from pathlib import Path
 
 from app.models import Clause, Document
 from app.parser.clauses import split_into_clauses
+from app.uploads import DocumentInputError, MAX_UPLOAD_BYTES
 
 
 def _meta_from_text(first_page: str) -> dict:
@@ -24,8 +25,24 @@ def _meta_from_text(first_page: str) -> dict:
 def load_pdf(path: str, doc_id: str) -> tuple[Document, list[dict]]:
     import pymupdf  # PyMuPDF
 
-    pdf = pymupdf.open(path)
-    pages = [(i + 1, pdf[i].get_text()) for i in range(len(pdf))]
+    # Deduplicate only overlapping PDF text blocks, never repeated obligations.
+    # Opening bytes also avoids a leaked native file handle on malformed PDFs on Windows.
+    with pymupdf.open(stream=Path(path).read_bytes(), filetype='pdf') as pdf:
+        if pdf.needs_pass:
+            raise DocumentInputError('PDF защищён паролем. Загрузите доступную для чтения копию.')
+        pages = []
+        for i, page in enumerate(pdf):
+            seen, blocks = set(), []
+            for block in page.get_text('blocks'):
+                if block[6] != 0:
+                    continue
+                if block[4].strip().isdigit() and block[1] > page.rect.height * 0.9:
+                    continue  # A footer may occur first in PDF content-stream order.
+                key = (tuple(round(v, 1) for v in block[:4]), block[4])
+                if key not in seen:
+                    seen.add(key)
+                    blocks.append(block[4])
+            pages.append((i + 1, '\n'.join(blocks)))
     meta = _meta_from_text(pages[0][1] if pages else "")
     clauses, anomalies = split_into_clauses(pages, doc_id, meta["edition"])
     doc = Document(doc_id=doc_id, file=Path(path).name, kind="pdf", clauses=clauses, **meta)
@@ -35,11 +52,18 @@ def load_pdf(path: str, doc_id: str) -> tuple[Document, list[dict]]:
 def _docx_paragraph_texts(path: str) -> list[str]:
     """Возвращает абзацы DOCX, восстанавливая автонумерацию списков (w:numPr)."""
     import docx
+    from docx.table import Table
 
     d = docx.Document(path)
     counters: dict[tuple[str, int], int] = {}
     out: list[str] = []
-    for p in d.paragraphs:
+    for p in d.iter_inner_content():
+        if isinstance(p, Table):
+            for row in p.rows:
+                cells = [c.text.strip() for c in row.cells if c.text.strip()]
+                if cells:
+                    out.append(' | '.join(dict.fromkeys(cells)))
+            continue
         text = p.text.strip()
         if not text:
             continue
@@ -54,11 +78,6 @@ def _docx_paragraph_texts(path: str) -> list[str]:
             if not re.match(r"^\d", text):
                 text = f"{prefix}. {text}"
         out.append(text)
-    for table in d.tables:                       # таблицы оргструктуры
-        for row in table.rows:
-            cells = [c.text.strip() for c in row.cells if c.text.strip()]
-            if cells:
-                out.append(" | ".join(dict.fromkeys(cells)))
     return out
 
 
@@ -79,7 +98,7 @@ def load_xlsx(path: str, doc_id: str, edition: str = "") -> tuple[Document, list
 
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
     clauses: list[Clause] = []
-    for ws in wb.worksheets:
+    for sheet_no, ws in enumerate(wb.worksheets, 1):
         for r_idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
             vals = [str(v).strip() for v in row if v is not None and str(v).strip()]
             if not vals:
@@ -87,18 +106,30 @@ def load_xlsx(path: str, doc_id: str, edition: str = "") -> tuple[Document, list
             number = f"{ws.title}!A{r_idx}"
             clauses.append(Clause(
                 clause_id=f"{doc_id}:{number}", doc_id=doc_id, edition=edition,
-                number=number, text=" | ".join(vals), page=1, section=ws.title,
+                number=number, text=" | ".join(vals), page=sheet_no, section=ws.title,
             ))
+    wb.close()
     doc = Document(doc_id=doc_id, file=Path(path).name, kind="xlsx", edition=edition, clauses=clauses)
     return doc, []
 
 
 def load_any(path: str, doc_id: str) -> tuple[Document, list[dict]]:
     ext = Path(path).suffix.lower()
-    if ext == ".pdf":
-        return load_pdf(path, doc_id)
-    if ext == ".docx":
-        return load_docx(path, doc_id)
-    if ext in (".xlsx", ".xlsm"):
-        return load_xlsx(path, doc_id)
-    raise ValueError(f"Неподдерживаемый формат: {ext}")
+    loaders = {'.pdf': load_pdf, '.docx': load_docx, '.xlsx': load_xlsx, '.xlsm': load_xlsx}
+    if ext not in loaders:
+        raise DocumentInputError(f'Неподдерживаемый формат: {ext}')
+    if Path(path).stat().st_size > MAX_UPLOAD_BYTES:
+        raise DocumentInputError('Размер одного документа не должен превышать 25 МБ.')
+    try:
+        doc, anomalies = loaders[ext](path, doc_id)
+    except DocumentInputError:
+        raise
+    except Exception as exc:
+        raise DocumentInputError(f'Не удалось прочитать {Path(path).name}. Проверьте формат и целостность файла.') from exc
+    if not any(len(c.text.strip()) > 2 for c in doc.clauses):
+        raise DocumentInputError(f'{doc.file}: не найдены текстовые пункты. Для скана нужен OCR; для положения — нумерованные разделы.')
+    if doc.kind == 'docx':
+        doc.warnings.append('DOCX: номера страниц условные (блоки по 40 абзацев). Для точных страниц используйте PDF.')
+    if doc.kind == 'xlsx':
+        doc.warnings.append('XLSX: источники указаны по листам и строкам. Анализ функций требует нумерованного положения в PDF/DOCX.')
+    return doc, anomalies

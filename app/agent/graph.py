@@ -11,6 +11,7 @@ from typing import Any, Callable, TypedDict
 from langgraph.graph import END, StateGraph
 
 from app import config
+from app.runtime import llm_enabled
 from app.agent import llm
 from app.agent.detectors import Toolkit
 from app.agent.structure import assign_owners, extract_units
@@ -36,6 +37,7 @@ class AgentState(TypedDict, total=False):
     anomalies: list[dict]
     executive_summary: str
     on_step: Callable[[dict], None] | None
+    warnings: list[str]
 
 
 def _log(state: AgentState, step: str, tool: str, summary: str, t0: float) -> list[dict]:
@@ -80,9 +82,14 @@ def node_plan(state: AgentState) -> dict:
     if has_funcs:
         plan += ["loss", "duplication"]
     plan += ["conflict", "crossref"]
-    if config.USE_LLM:
+    if llm_enabled():
         plan.append("llm_review")
-    return {"plan": plan, "trace": _log(state, "plan", "Planner", " → ".join(plan), t0)}
+    warnings = [w for d in (b, a) for w in d.warnings]
+    if not has_struct:
+        warnings.append('Перечень подразделений распознан не в обоих документах: сравнение структуры ограничено.')
+    if not has_funcs:
+        warnings.append('Раздел 5 не найден в обоих документах: анализ потерь и дублирования функций пропущен.')
+    return {"plan": plan, "warnings": warnings, "trace": _log(state, "plan", "Planner", " → ".join(plan), t0)}
 
 
 def node_structure(state: AgentState) -> dict:
@@ -117,7 +124,10 @@ def node_llm_review(state: AgentState) -> dict:
     findings = state["findings"]
     by_id = {f.id: f for f in findings}
     notes = []
+    warnings = list(state.get('warnings', []))
     verdicts = llm.review_gray(state.get("gray", []))
+    if verdicts is None:
+        warnings.append('LLM-проверка функций недоступна или не прошла валидацию: сохранены выводы правил.')
     if verdicts:
         for fid, v in verdicts.items():
             f = by_id.get(fid)
@@ -127,10 +137,19 @@ def node_llm_review(state: AgentState) -> dict:
                 f.type, f.severity = "reworded", "info"
             elif v.get("verdict") in ("lost", "partially_lost", "moved"):
                 f.type = v["verdict"]
-            f.rationale += f" LLM: {v.get('rationale', '')}"
+                labels = {'lost': 'Потеря функции', 'partially_lost': 'Частичная потеря функции', 'moved': 'Перенос функции'}
+                f.title = labels[f.type] + ': ' + f.title.partition(': ')[2]
+                f.severity = 'high' if f.type == 'lost' else 'medium'
+                targets = [e for e in f.evidence if e.role in ('closest', 'target')]
+                for e in targets:
+                    e.role = 'target' if f.type == 'moved' else 'closest'
+                f.units_after = [] if f.type == 'lost' else [u for e in targets for u in state['docs'][e.doc_id].get(e.clause).owner_units]
+            f.rationale = f"AI-интерпретация: {v.get('rationale', '')}"
             f.method = "similarity+llm"
         notes.append(f"пограничных случаев: {len(verdicts)}")
     dv = llm.review_dups(state.get("dup_cands", []))
+    if dv is None:
+        warnings.append('LLM-проверка дублирования недоступна или не прошла валидацию: сохранены выводы правил.')
     if dv:
         for fid, v in dv.items():
             f = by_id.get(fid)
@@ -141,7 +160,7 @@ def node_llm_review(state: AgentState) -> dict:
                 f.method = "similarity+llm"
         notes.append(f"кандидатов в дублирование: {len(dv)}")
     kept = [f for f in findings if f.type not in ("reworded", "not_duplication")]
-    return {"findings": kept,
+    return {"findings": kept, "warnings": warnings,
             "trace": _log(state, "llm_review", config.LLM_MODEL,
                           "; ".join(notes) or "LLM недоступен — оставлены детерминированные выводы", t0)}
 
@@ -170,11 +189,8 @@ def route_after_verify(state: AgentState) -> str:
 
 def node_report(state: AgentState) -> dict:
     t0 = time.time()
-    brief = [{"id": f.id, "type": f.type, "title": f.title,
-              "clauses": [f"{e.doc_id} п. {e.clause}" for e in f.evidence]}
-             for f in state["findings"] if f.severity != "info"]
-    summary = llm.executive_summary({"findings": brief}) if config.USE_LLM else None
-    return {"executive_summary": summary or "",
+    # The overview is rendered from verified findings; no unverified free-text LLM summary.
+    return {"executive_summary": "",
             "trace": _log(state, "report", "ReportGenerator", "отчёт сформирован", t0)}
 
 
