@@ -24,6 +24,23 @@ def style():
     st.html('<style>' + Path(__file__).with_name('styles.css').read_text(encoding='utf-8') + '</style>')
 
 
+def theme_switcher():
+    """Install the theme control in Streamlit's main-menu popover, not the sidebar.
+
+    Only repository-owned JS is executable; document text stays escaped.
+    """
+    script = Path(__file__).with_name('theme.js').read_text(encoding='utf-8')
+    with st.container(key='theme_bootstrap'):
+        st.html('''<div class="theme-control" role="group" aria-label="Цветовая тема">
+            <div class="theme-label">Оформление</div>
+            <div class="theme-options">
+                <button type="button" data-org-theme-choice="light" aria-pressed="false">Светлая</button>
+                <button type="button" data-org-theme-choice="dark" aria-pressed="false">Тёмная</button>
+                <button type="button" data-org-theme-choice="system" aria-pressed="false">Системная</button>
+            </div>
+        </div><script>''' + script + '</script>', unsafe_allow_javascript=True)
+
+
 def safe(text) -> str:
     return html.escape(str(text), quote=True)
 

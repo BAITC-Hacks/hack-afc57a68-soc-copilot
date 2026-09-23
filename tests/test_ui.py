@@ -21,11 +21,53 @@ def test_demo_metrics_filters_and_sources():
     assert len(at.tabs) == 5
     at.button(key='metric_Потери').click().run()
     assert not at.exception
-    assert at.selectbox(key='active_filter').value == 'Потери'
+    assert at.multiselect(key='active_filters').value == ['Потери']
+    assert at.button(key='metric_Потери').proto.type == 'primary'
     assert all(b.key.startswith('finding_L') for b in at.button if b.key and b.key.startswith('finding_'))
+    # Multiple cards activate in ONE run, including a card earlier in the grid.
+    at.button(key='metric_Создано').click().run()
+    at.button(key='metric_Конфликты').click().run()
+    assert set(at.multiselect(key='active_filters').value) == {'Потери', 'Создано', 'Конфликты'}
+    for name in ('Создано', 'Потери', 'Конфликты'):
+        assert at.button(key='metric_' + name).proto.type == 'primary'
+    assert len([b for b in at.button if b.key and b.key.startswith('finding_')]) == 8
+    # Deselect every card: the empty selection restores all findings.
+    for name in ('Создано', 'Потери', 'Конфликты'):
+        at.button(key='metric_' + name).click().run()
+        assert at.button(key='metric_' + name).proto.type == 'secondary'
+    assert at.multiselect(key='active_filters').value == []
+    assert len([b for b in at.button if b.key and b.key.startswith('finding_')]) == 24
+    # Picker and cards share state. Removed duplicates have their own category.
+    at.multiselect(key='active_filters').set_value(['Переносы']).run()
+    assert at.button(key='metric_Переносы').proto.type == 'primary'
+    assert len([b for b in at.button if b.key and b.key.startswith('finding_')]) == 2
+    at.button(key='finding_M2').click().run()
+    assert at.session_state['selected_finding'] == 'M2'
+    assert at.button(key='finding_M2').proto.type == 'primary'
+    assert at.button(key='finding_M1').proto.type == 'secondary'
     next(t for t in at.text_input if t.label == 'Поиск по выводам и цитатам').set_value('ничего_не_найдено_123').run()
     assert not at.exception
     assert any('изменений нет' in i.value for i in at.info)
+    at.button(key='reset_filters').click().run()
+    assert not at.exception
+    assert at.text_input(key='finding_query').value == ''
+    assert at.multiselect(key='active_filters').value == []
+    assert len([b for b in at.button if b.key and b.key.startswith('finding_')]) == 24
+
+
+def test_new_comparison_resets_filters():
+    at = AppTest.from_file(Path('ui/app.py').resolve(), default_timeout=90).run()
+    next(b for b in at.button if b.label == 'Открыть демо').click().run()
+    at.button(key='metric_Дефекты').click().run()
+    next(b for b in at.button if b.label == 'Новое сравнение').click().run()
+    assert not at.exception
+    assert at.session_state['step'] == 1
+    assert not any('data-org-theme-choice' in e.proto.body for e in at.sidebar.get('html'))
+    theme = next(e for e in at.get('html') if 'orgTraceThemeController' in e.proto.body)
+    assert theme.proto.unsafe_allow_javascript
+    assert '<div class="theme-control"' in theme.proto.body
+    assert at.session_state['active_filters'] == []
+    assert 'report' not in at.session_state
 
 
 def test_wizard_mode_step_and_run():
