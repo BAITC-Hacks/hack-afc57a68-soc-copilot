@@ -1,0 +1,14 @@
+[theme]
+base = "light"
+primaryColor = "#087f75"
+backgroundColor = "#f5f7f8"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#142b36"
+font = "sans serif"
+
+[server]
+maxUploadSize = 25
+fileWatcherType = "poll"
+
+[browser]
+gatherUsageStats = false

@@ -5,12 +5,14 @@ import datetime as dt
 import uuid
 
 from app import config
+from app.runtime import llm_enabled, similarity_backend
 from app.models import Finding, Report
 
 SEV_ORDER = {"high": 0, "medium": 1, "low": 2, "info": 3}
 SEV_RU = {"high": "🔴 высокая", "medium": "🟠 средняя", "low": "🟡 низкая", "info": "⚪ инфо"}
 DISCLAIMER = ("Выводы носят рекомендательный характер и требуют проверки ответственным сотрудником. "
-              "Каждый вывод подтверждён цитатой из исходного документа; цитаты сверены программно.")
+              "Дословность цитат и адреса источников проверяются программно. Это не является проверкой "
+              "смысловой интерпретации; неподтверждённые выводы вынесены отдельно.")
 
 
 def build_report(state: dict) -> Report:
@@ -32,11 +34,12 @@ def build_report(state: dict) -> Report:
     meta = {
         "run_id": f"{dt.datetime.now(dt.timezone.utc).replace(tzinfo=None):%Y%m%dT%H%M%S}_{uuid.uuid4().hex[:6]}",
         "generated_at": dt.datetime.now(dt.timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds") + "Z",
-        "mode": "llm" if config.USE_LLM else "deterministic",
-        "llm_model": config.LLM_MODEL if config.USE_LLM else None,
-        "similarity_backend": config.SIMILARITY_BACKEND,
+        "mode": "llm" if llm_enabled() else "deterministic",
+        "llm_model": config.LLM_MODEL if llm_enabled() else None,
+        "similarity_backend": similarity_backend(),
+        "warnings": state.get('warnings', []),
         "documents": [{"doc_id": d.doc_id, "file": d.file, "title": d.title, "edition": d.edition,
-                       "approved": d.approved, "clauses": len(d.clauses),
+                       "approved": d.approved, "clauses": len(d.clauses), "kind": d.kind,
                        "role": "before" if d.doc_id == state["before_id"] else "after"}
                       for d in docs.values()],
         "disclaimer": DISCLAIMER,
@@ -53,7 +56,7 @@ def _src(f: Finding) -> str:
 
 
 def _quotes(f: Finding) -> str:
-    role = {"source": "Было", "target": "Стало", "closest": "Ближайший аналог", "support": "См. также"}
+    role = {"source": "Источник", "target": "Новая редакция", "closest": "Ближайший аналог", "support": "См. также"}
     return "\n".join(f"> **{role.get(e.role, e.role)} ({e.doc_id}, п. {e.clause}, стр. {e.page}):** «{e.quote}»"
                      for e in f.evidence)
 
@@ -95,8 +98,7 @@ def to_markdown(r: Report) -> str:
                    f"{st.get(f.type, f.type)} | {_src(f)} |")
     out.append("")
     for f in r.structure_changes:
-        if f.type in ("reorganized", "removed") or "изменён" in f.rationale:
-            out.append(f"- **{f.title}.** {f.rationale}")
+        out.append(_block(f))
     out.append("")
 
     sections = [
@@ -118,7 +120,10 @@ def to_markdown(r: Report) -> str:
         out.append(f"- [{f.id}] {f.recommendation} ({_src(f)})")
     if r.unverified_findings:
         out.append("\n## Непроверенные выводы\n")
-        out += [f"- {f.id}: {f.title} — {f.verify_note}" for f in r.unverified_findings]
+        out += [_block(f) + '\nПричина: ' + f.verify_note for f in r.unverified_findings]
+    if r.meta.get('warnings'):
+        out.append('\n## Ограничения этого анализа\n')
+        out.extend('- ' + w for w in r.meta['warnings'])
     out.append("\n## 9. Методология\n")
     out.append("Шаги агента: " + " → ".join(f"{t['tool']} ({t['summary']})" for t in r.agent_trace) + "\n")
     out.append(f"_{r.meta['disclaimer']}_\n")

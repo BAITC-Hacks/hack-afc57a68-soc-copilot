@@ -82,6 +82,8 @@ class Toolkit:
         self.before, self.after = before, after
         self.ub, self.ua = units_before, units_after
         self.sim = Similarity().fit([c.text for c in before.clauses + after.clauses])
+        self.sim_kept, self.sim_lost, self.sim_dup = ((0.88, 0.70, 0.90)
+            if self.sim.backend == 'openai' else (0.80, 0.50, 0.80))
         self.fb = function_clauses(before)
         self.fa = function_clauses(after)
         self.M = self._combined(self.fb, self.fa)
@@ -114,8 +116,10 @@ class Toolkit:
             idx = [i for i, c in enumerate(self.fb) if ab in c.owner_units]
             targets = Counter()
             for i in idx:
+                if not self.fa:
+                    continue
                 j = int(self.M[i].argmax())
-                if self.M[i, j] >= config.SIM_LOST:
+                if self.M[i, j] >= self.sim_lost:
                     for o in self.fa[j].owner_units:
                         if o not in SPECIAL_OWNERS:
                             targets[o] += 1
@@ -195,13 +199,13 @@ class Toolkit:
             s_any = float(self.M[i, j_any]) if j_any >= 0 else 0.0
             before_lbl = unit_label(c.owner_units)
 
-            if s_same >= config.SIM_KEPT:
+            if s_same >= self.sim_kept:
                 t = self.fa[j_same]
                 frags = self._really_lost(lost_fragments(c.text, t.text, min_words=4), mapped)
                 if frags and s_same < 0.97 and not is_generic(c.text):
                     findings.append(self._fn("partially_lost", "low", c, t, s_same, frags))
                 continue
-            if s_any >= config.SIM_KEPT and j_any >= 0:
+            if s_any >= self.sim_kept and j_any >= 0:
                 t = self.fa[j_any]
                 existed = self._existed_before(t)
                 if is_generic(c.text):
@@ -219,7 +223,7 @@ class Toolkit:
             best_j = j_same if s_same >= s_any else j_any
             best_s = max(s_same, s_any)
             t = self.fa[best_j] if best_j >= 0 else None
-            if best_s >= config.SIM_LOST and t is not None:
+            if best_s >= self.sim_lost and t is not None:
                 frags = self._really_lost(lost_fragments(c.text, t.text), mapped)
                 if (not frags and best_j == j_same) or is_generic(c.text):
                     continue                      # переформулировано / типовая обязанность
@@ -242,7 +246,7 @@ class Toolkit:
         for c in self.fb:
             if set(c.owner_units) & set(target.owner_units):
                 if max(self.sim.matrix([c.text], [target.text])[0, 0],
-                       lex_score(c.text, target.text)) >= config.SIM_KEPT:
+                       lex_score(c.text, target.text)) >= self.sim_kept:
                     return c
         return None
 
@@ -290,7 +294,7 @@ class Toolkit:
                 if set(B[i].owner_units) & set(B[j].owner_units):
                     continue
                 s = float(max(M[i, j], M[j, i]))
-                if s < config.SIM_DUP:
+                if s < self.sim_dup:
                     continue
                 a, b = B[i], B[j]
                 f = Finding(

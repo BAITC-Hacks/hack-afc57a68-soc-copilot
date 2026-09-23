@@ -1,0 +1,14 @@
+.git
+.venv
+venv
+.env
+.env.*
+!.env.example
+.cache
+runs
+__pycache__
+**/__pycache__
+.pytest_cache
+.codex
+.agents
+.vscode

@@ -17,6 +17,7 @@ class Clause(BaseModel):
     depth: int = 1
     owner_units: list[str] = Field(default_factory=list)
     is_leaf: bool = True
+    source_pages: dict[int, str] = Field(default_factory=dict)
 
 
 class Document(BaseModel):
@@ -27,6 +28,7 @@ class Document(BaseModel):
     approved: str = ""
     kind: Literal["pdf", "docx", "xlsx"] = "pdf"
     clauses: list[Clause] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
     def get(self, number: str) -> Optional[Clause]:
         for c in self.clauses:
