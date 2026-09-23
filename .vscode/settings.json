@@ -1,0 +1,13 @@
+{
+  "files.exclude": {
+    "**/.venv": true,
+    "**/node_modules": true
+  },
+  "search.exclude": {
+    "**/.env": true,
+    "**/.venv": true,
+    "**/node_modules": true
+  },
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true
+}
