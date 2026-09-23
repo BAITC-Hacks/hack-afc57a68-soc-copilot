@@ -47,6 +47,8 @@ class Similarity:
         return m.toarray()
 
     def matrix(self, a: list[str], b: list[str]) -> np.ndarray:
+        if not a or not b:
+            return np.zeros((len(a), len(b)), dtype=float)
         ea, eb = self.embed(a), self.embed(b)
         na = np.linalg.norm(ea, axis=1, keepdims=True) + 1e-9
         nb = np.linalg.norm(eb, axis=1, keepdims=True) + 1e-9

@@ -95,13 +95,13 @@ TOOLS = [
         "description": "Поиск пунктов документов по смыслу. Возвращает номер, страницу, владельца и текст.",
         "parameters": {"type": "object", "properties": {
             "query": {"type": "string"},
-            "doc_id": {"type": "string", "description": "D_BEFORE, D_AFTER или пусто — оба"},
+            "doc_id": {"type": "string", "description": "D_BEFORE — старая редакция, D_AFTER — новая; можно использовать ID из результатов (например D8, D9). Пусто — оба документа."},
             "top_k": {"type": "integer", "default": 5}}, "required": ["query"]}}},
     {"type": "function", "function": {
         "name": "get_clause",
         "description": "Получить полный текст пункта по номеру.",
         "parameters": {"type": "object", "properties": {
-            "doc_id": {"type": "string"}, "number": {"type": "string"}},
+            "doc_id": {"type": "string", "description": "ID из результатов поиска (например D8, D9), либо D_BEFORE / D_AFTER."}, "number": {"type": "string"}},
             "required": ["doc_id", "number"]}}},
     {"type": "function", "function": {
         "name": "list_findings",

@@ -37,8 +37,16 @@ def chat_tools(run_id: str) -> dict:
     state, report = run["state"], run["report"]
     docs, tk = state["docs"], state["toolkit"]
 
+    def resolve_doc_id(doc_id: str) -> str:
+        return {"D_BEFORE": state["before_id"], "D_AFTER": state["after_id"]}.get(doc_id, doc_id)
+
     def search_clauses(query: str, doc_id: str = "", top_k: int = 5):
+        doc_id = resolve_doc_id(doc_id)
+        if doc_id and doc_id not in docs:
+            return {"error": "документ не найден", "available_doc_ids": list(docs)}
         pool = [c for d in docs.values() if not doc_id or d.doc_id == doc_id for c in d.clauses]
+        if not pool:
+            return []
         sims = tk.sim.matrix([query], [c.text for c in pool])[0]
         idx = sims.argsort()[::-1][:top_k]
         return [{"doc_id": pool[i].doc_id, "number": pool[i].number, "page": pool[i].page,
@@ -46,7 +54,7 @@ def chat_tools(run_id: str) -> dict:
                  "score": round(float(sims[i]), 3)} for i in idx]
 
     def get_clause(doc_id: str, number: str):
-        d = docs.get(doc_id)
+        d = docs.get(resolve_doc_id(doc_id))
         c = d.get(number) if d else None
         return c.model_dump() if c else {"error": "пункт не найден"}
 
