@@ -17,15 +17,17 @@ from app.agent import llm
 from app.pipeline import analyze, chat_tools, get_run
 from app.report import to_markdown
 from app.uploads import save_upload
+from ui.branding import favicon_svg, logo_html
 from ui.components import SEVERITIES, all_findings, safe, show_finding, source_panel, style, theme_switcher, word_diff
 from ui.filters import FILTERS, METRICS, filter_findings, toggle_selection
 
-st.set_page_config(page_title='OrgTrace · Сравнение документов', page_icon='◈', layout='wide')
+st.set_page_config(page_title='OrgTrace · Сравнение документов', page_icon=favicon_svg(), layout='wide')
 style()
 theme_switcher()
 st.session_state.setdefault('step', 1)
 st.session_state.setdefault('history', {})
 st.session_state.setdefault('active_filters', [])
+st.session_state.setdefault('filter_revision', 0)
 
 
 def clear_finding():
@@ -34,6 +36,7 @@ def clear_finding():
 
 def reset_filters():
     st.session_state.update(active_filters=[], finding_query='', finding_severity='Все уровни')
+    st.session_state['filter_revision'] += 1
     clear_finding()
 
 
@@ -41,6 +44,16 @@ def toggle_filter(name):
     # Callbacks execute BEFORE rerendering, so every card immediately reflects
     # its new state (including cards rendered earlier in the same row).
     st.session_state['active_filters'] = toggle_selection(st.session_state['active_filters'], name)
+    st.session_state['filter_revision'] += 1
+    clear_finding()
+
+
+def change_categories(revision):
+    # Ignore delayed events from a picker rendered before the last card click.
+    # A new widget identity prevents stale browser state from undoing that click.
+    if revision != st.session_state['filter_revision']:
+        return
+    st.session_state['active_filters'] = list(st.session_state[f'filter_categories_{revision}'])
     clear_finding()
 
 
@@ -87,7 +100,7 @@ def execute(demo=False):
 
 
 with st.sidebar:
-    st.html('<div class="brand"><span class="brand-mark">◈</span>OrgTrace</div>')
+    st.html(logo_html())
     st.caption('РАБОЧЕЕ ПРОСТРАНСТВО')
     st.button('Новое сравнение', icon=':material/add:', width='stretch', on_click=reset)
     demo_clicked = st.button('Открыть демо', icon=':material/play_circle:', width='stretch',
@@ -208,8 +221,11 @@ overview, compare, export, trace, chat_tab = st.tabs(['Обзор изменен
 
 with overview:
     c1, c2, c3 = st.columns([1.2, 1, 2])
-    active_filters = c1.multiselect('Типы изменений', list(FILTERS), key='active_filters',
-                                    placeholder='Все категории', on_change=clear_finding)
+    revision = st.session_state['filter_revision']
+    c1.multiselect('Типы изменений', list(FILTERS), key=f'filter_categories_{revision}',
+                   default=st.session_state['active_filters'], placeholder='Все категории',
+                   on_change=change_categories, args=(revision,))
+    active_filters = st.session_state['active_filters']
     severity = c2.selectbox('Критичность', ['Все уровни'] + list(SEVERITIES.values()), key='finding_severity')
     query = c3.text_input('Поиск по выводам и цитатам', placeholder='Подразделение, функция или номер пункта…', key='finding_query')
     severity_key = next((key for key, label in SEVERITIES.items() if label == severity), None)

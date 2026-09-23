@@ -15,19 +15,24 @@ def test_demo_metrics_filters_and_sources():
     at = AppTest.from_file(Path('ui/app.py').resolve(), default_timeout=90).run()
     assert not at.exception
     assert at.session_state['step'] == 1
+    assert any('brand-logo' in e.proto.body and 'alt="OrgTrace"' in e.proto.body
+               for e in at.sidebar.get('html'))
     next(b for b in at.button if b.label == 'Открыть демо').click().run()
     assert not at.exception
     assert at.session_state['step'] == 3
     assert len(at.tabs) == 5
+    original_picker_key = at.multiselect[0].key
     at.button(key='metric_Потери').click().run()
     assert not at.exception
-    assert at.multiselect(key='active_filters').value == ['Потери']
+    assert at.multiselect[0].value == ['Потери']
+    assert at.multiselect[0].key != original_picker_key
+    assert at.session_state['active_filters'] == ['Потери']
     assert at.button(key='metric_Потери').proto.type == 'primary'
     assert all(b.key.startswith('finding_L') for b in at.button if b.key and b.key.startswith('finding_'))
     # Multiple cards activate in ONE run, including a card earlier in the grid.
     at.button(key='metric_Создано').click().run()
     at.button(key='metric_Конфликты').click().run()
-    assert set(at.multiselect(key='active_filters').value) == {'Потери', 'Создано', 'Конфликты'}
+    assert set(at.multiselect[0].value) == {'Потери', 'Создано', 'Конфликты'}
     for name in ('Создано', 'Потери', 'Конфликты'):
         assert at.button(key='metric_' + name).proto.type == 'primary'
     assert len([b for b in at.button if b.key and b.key.startswith('finding_')]) == 8
@@ -35,10 +40,11 @@ def test_demo_metrics_filters_and_sources():
     for name in ('Создано', 'Потери', 'Конфликты'):
         at.button(key='metric_' + name).click().run()
         assert at.button(key='metric_' + name).proto.type == 'secondary'
-    assert at.multiselect(key='active_filters').value == []
+    assert at.multiselect[0].value == []
     assert len([b for b in at.button if b.key and b.key.startswith('finding_')]) == 24
     # Picker and cards share state. Removed duplicates have their own category.
-    at.multiselect(key='active_filters').set_value(['Переносы']).run()
+    at.multiselect[0].set_value(['Переносы']).run()
+    assert at.session_state['active_filters'] == ['Переносы']
     assert at.button(key='metric_Переносы').proto.type == 'primary'
     assert len([b for b in at.button if b.key and b.key.startswith('finding_')]) == 2
     at.button(key='finding_M2').click().run()
@@ -51,7 +57,7 @@ def test_demo_metrics_filters_and_sources():
     at.button(key='reset_filters').click().run()
     assert not at.exception
     assert at.text_input(key='finding_query').value == ''
-    assert at.multiselect(key='active_filters').value == []
+    assert at.multiselect[0].value == []
     assert len([b for b in at.button if b.key and b.key.startswith('finding_')]) == 24
 
 
